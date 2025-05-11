@@ -1,16 +1,42 @@
 const mongoose = require('mongoose');
 
 const projectSchema = new mongoose.Schema({
-  name: String,
-  date: Date,
-  Creator: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  Editors: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  Assignments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Assignment' }],
-  Type: [String],
-  Budget: Number,
+  name: {
+    type: String,
+    required: true
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  Creator: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Users',
+    required: true
+  },
+  Editors: [{ 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Users' 
+  }],
+  Type: {
+    type: [String],
+    required: true
+  },
+  Budget: {
+    type: Number,
+    default: 0
+  },
+  // Keep these fields but make them optional
+  Assignments: [{ 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Assignment' 
+  }],
   Area: String,
   Venue: String,
   AmountOfPeople: Number
-}, { collection: 'Projects' }); 
+}, { 
+  collection: 'Projects',
+  timestamps: true // Adds createdAt and updatedAt timestamps
+}); 
 
 module.exports = mongoose.model('Projects', projectSchema);
