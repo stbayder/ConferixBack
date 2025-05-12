@@ -13,12 +13,16 @@ app.use(cors());
 require('./models/User');
 require('./models/Project');
 require('./models/Assignment');
+require('./models/ProjectAssignment.js')
 
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
-}).then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+}).then(async () => {
+  console.log('MongoDB connected');
+  const loadAssignmentsIfEmpty = require('./utils/loadAssignmentsIfEmpty');
+  await loadAssignmentsIfEmpty();
+}).catch(err => console.error('MongoDB connection error:', err));
 
 // Import routes
 const userRoutes = require('./routes/Users.js');

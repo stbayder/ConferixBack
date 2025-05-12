@@ -3,7 +3,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Project = mongoose.model('Projects');
 const User = mongoose.model('Users');
-const { auth } = require('../middleware/auth');
+const { auth } = require('../utils/auth');
 
 /**
  * Create new project with simplified required parameters
