@@ -3,6 +3,8 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Project = mongoose.model('Projects');
 const User = mongoose.model('Users');
+const Assignment = require('../models/Assignment');
+const ProjectAssignment = require('../models/ProjectAssignment');
 const { auth } = require('../utils/auth');
 
 /**
@@ -11,38 +13,57 @@ const { auth } = require('../utils/auth');
  */
 router.post('/', auth, async (req, res) => {
   try {
-    const {
-      name,
-      date,
-      type,
-      budget = 0
-    } = req.body;
+    const { name, date, type, budget = 0 } = req.body;
 
     // Validate required fields
-    if (!name) {
-      return res.status(400).json({ error: 'שם הפרויקט הוא שדה חובה' });
-    }
-    
-    if (!date) {
-      return res.status(400).json({ error: 'תאריך הפרויקט הוא שדה חובה' });
-    }
-    
-    if (!type || (Array.isArray(type) && type.length === 0)) {
+    if (!name) return res.status(400).json({ error: 'שם הפרויקט הוא שדה חובה' });
+    if (!date) return res.status(400).json({ error: 'תאריך הפרויקט הוא שדה חובה' });
+    if (!type || (Array.isArray(type) && type.length === 0))
       return res.status(400).json({ error: 'סוג הפרויקט הוא שדה חובה' });
-    }
 
-    // Create new project with simplified parameters
+    const projectTypeArray = Array.isArray(type) ? type : [type];
+    const projectDate = new Date(date);
+
+    // Create the project
     const project = new Project({
       name,
-      date: new Date(date),
+      date: projectDate,
       Creator: req.user._id,
-      Type: Array.isArray(type) ? type : [type],
+      Type: projectTypeArray,
       Budget: budget,
-      Editors: [], // Start with no editors
-      Assignments: [] // Start with no assignments
+      Editors: [],
+      Assignments: []
     });
 
     await project.save();
+
+    // Find matching assignments where all project types exist in the assignment Type array
+    const assignments = await Assignment.find({
+      Type: { $all: projectTypeArray }
+    });
+
+    const projectAssignments = assignments.map(assignment => {
+      const offsetDays = assignment.RecommendedStartOffset || 0;
+      const startDate = new Date(projectDate);
+      startDate.setDate(startDate.getDate() + offsetDays);
+
+      return {
+        Assignment: assignment._id,
+        Project: project._id,
+        Assignee: null, // not assigned yet
+        EstimatedDate: assignment.IsOngoing ? null : assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null,
+        RecommendedStartDate: startDate,
+        Comments: [],
+        Important: assignment.IsDayOf || false,
+        Status: 'Pending'
+      };
+    });
+    const insertedAssignments = await ProjectAssignment.insertMany(projectAssignments);
+
+    // Update the project with linked assignment IDs
+    project.Assignments = insertedAssignments.map(pa => pa._id);
+    await project.save();
+
     res.status(201).json(project);
   } catch (err) {
     console.error('Error creating project:', err);
@@ -61,7 +82,17 @@ router.get('/', auth, async (req, res) => {
         { Creator: req.user._id },
         { Editors: req.user._id }
       ]
-    }).populate('Creator', 'Email');
+    }).populate('Creator', 'Email')
+      .populate({
+        path: 'Assignments',
+        model: 'ProjectAssignments',
+        populate: [
+          {
+            path: 'Assignment',
+            model: 'Assignments'
+          },
+        ]
+      });;
     
     res.json(projects);
   } catch (err) {

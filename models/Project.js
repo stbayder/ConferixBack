@@ -29,7 +29,7 @@ const projectSchema = new mongoose.Schema({
   // Keep these fields but make them optional
   Assignments: [{ 
     type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Assignment' 
+    ref: 'ProjectAssignments' 
   }],
   Area: String,
   Venue: String,

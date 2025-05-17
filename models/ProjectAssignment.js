@@ -4,7 +4,7 @@ const ProjectAssignmentSchema = new mongoose.Schema({
   Assignment:{ type: mongoose.Schema.Types.ObjectId, ref: 'Assignments' },
   Project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project' },
   Assignee: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  EstimatedDate: Date,
+  EstimatedTime: Date,
   RecommendedStartDate:Date,
   Comments:Array,
   Important:Boolean,

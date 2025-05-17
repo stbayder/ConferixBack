@@ -25,16 +25,20 @@ async function loadAssignmentsIfEmpty() {
         .split(',')
         .map(s => s.trim());
 
-      // Combine and remove duplicates
       const fullType = Array.from(new Set([...typeArray, ...audienceArray]));
+
+      const isOngoing = (row['is_ongoing'] || '').toUpperCase() === 'Y';
+      const isDayOf = (row['is_day_of'] || '').toUpperCase() === 'Y';
 
       return {
         Step: row['step'],
         Assignment: row['assignment'],
-        EstimatedTime: parseEstimatedTime(row['estimated_time']),
-        RecommendedStartDate: row['recommended_start_date'],
+        EstimatedTime: isOngoing ? 0 : Number(row['estimated_time']) || 0,
+        RecommendedStartOffset: Number(row['recommended_start_offset']) || 0,
+        IsOngoing: isOngoing,
+        IsDayOf: isDayOf,
         Type: fullType,
-        Status: 'Pending' // Default value
+        Status: 'Pending'
       };
     });
 
@@ -43,14 +47,6 @@ async function loadAssignmentsIfEmpty() {
   } catch (err) {
     console.error('Error loading assignments from Excel:', err);
   }
-}
-
-function parseEstimatedTime(value) {
-  // You can customize this function based on how you want to handle ranges, days/hours, etc.
-  if (typeof value === 'string') {
-    return value; // keep raw value if it's descriptive (e.g., "2–4 ימים")
-  }
-  return Number(value) || 0;
 }
 
 module.exports = loadAssignmentsIfEmpty;
