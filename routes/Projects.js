@@ -44,21 +44,43 @@ router.post('/', auth, async (req, res) => {
     });
 
     const projectAssignments = assignments.map(assignment => {
-      const offsetDays = assignment.RecommendedStartOffset || 0;
-      const startDate = new Date(projectDate);
-      startDate.setDate(startDate.getDate() + offsetDays);
+    const offsetDays = assignment.RecommendedStartOffset || 0;
+    const startDate = new Date(projectDate);
+    startDate.setDate(startDate.getDate() + offsetDays);
 
-      return {
-        Assignment: assignment._id,
-        Project: project._id,
-        Assignee: null, // not assigned yet
-        EstimatedTime: assignment.IsOngoing ? null : assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null,
-        RecommendedStartDate: startDate,
-        Comments: [], // Initialize empty comments array (will contain Comment ObjectIds)
-        Important: assignment.IsDayOf || false,
-        Status: 'Pending'
-      };
-    });
+    let dueDate = null;
+    let estimatedTime = null;
+
+    if (assignment.IsDayOf) {
+      // For day-of assignments, due date is the project date
+      dueDate = new Date(projectDate);
+      estimatedTime = assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null;
+    } else if (assignment.IsOngoing) {
+      // For ongoing assignments, no specific due date or estimated completion time
+      dueDate = null;
+      estimatedTime = null;
+    } else if (assignment.EstimatedTime) {
+      // For regular assignments, calculate due date based on start date + estimated time
+      dueDate = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
+      estimatedTime = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
+    } else {
+      // No estimated time provided, set due date to start date
+      dueDate = new Date(startDate);
+      estimatedTime = null;
+    }
+
+    return {
+      Assignment: assignment._id,
+      Project: project._id,
+      Assignee: null, // not assigned yet
+      EstimatedTime: estimatedTime,
+      RecommendedStartDate: startDate,
+      DueDate: dueDate,
+      Comments: [], // Initialize empty comments array (will contain Comment ObjectIds)
+      Important: assignment.IsDayOf || false,
+      Status: 'Pending'
+    };
+  });
     const insertedAssignments = await ProjectAssignment.insertMany(projectAssignments);
 
     // Update the project with linked assignment IDs

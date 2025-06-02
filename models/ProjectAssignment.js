@@ -6,6 +6,7 @@ const ProjectAssignmentSchema = new mongoose.Schema({
   Assignee: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   EstimatedTime: Date,
   RecommendedStartDate: Date,
+  DueDate:Date,
   Comments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Comments' }], // Reference to Comment documents
   Important: Boolean,
   Status: String,
