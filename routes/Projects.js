@@ -5,6 +5,7 @@ const Project = mongoose.model('Projects');
 const User = mongoose.model('Users');
 const Assignment = require('../models/Assignment');
 const ProjectAssignment = require('../models/ProjectAssignment');
+const Comments = require('../models/Comment'); // Add Comments model
 const { auth } = require('../utils/auth');
 
 /**
@@ -51,9 +52,9 @@ router.post('/', auth, async (req, res) => {
         Assignment: assignment._id,
         Project: project._id,
         Assignee: null, // not assigned yet
-        EstimatedDate: assignment.IsOngoing ? null : assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null,
+        EstimatedTime: assignment.IsOngoing ? null : assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null,
         RecommendedStartDate: startDate,
-        Comments: [],
+        Comments: [], // Initialize empty comments array (will contain Comment ObjectIds)
         Important: assignment.IsDayOf || false,
         Status: 'Pending'
       };
@@ -77,22 +78,48 @@ router.post('/', auth, async (req, res) => {
  */
 router.get('/', auth, async (req, res) => {
   try {
+    const { includeComments = false } = req.query;
+
+    let populateOptions = {
+      path: 'Assignments',
+      model: 'ProjectAssignments',
+      populate: [
+        {
+          path: 'Assignment',
+          model: 'Assignments'
+        },
+        {
+          path: 'Assignee',
+          model: 'Users',
+          select: 'Email Role'
+        }
+      ]
+    };
+
+    // Add comment population if requested
+    if (includeComments === 'true') {
+      populateOptions.populate.push({
+        path: 'Comments',
+        model: 'Comments',
+        match: { IsDeleted: false }, // Only include non-deleted comments
+        populate: {
+          path: 'Author',
+          model: 'Users',
+          select: 'Email Role'
+        },
+        options: { sort: { CreatedAt: -1 } } // Sort comments by newest first
+      });
+    }
+
     const projects = await Project.find({
       $or: [
         { Creator: req.user._id },
         { Editors: req.user._id }
       ]
-    }).populate('Creator', 'Email')
-      .populate({
-        path: 'Assignments',
-        model: 'ProjectAssignments',
-        populate: [
-          {
-            path: 'Assignment',
-            model: 'Assignments'
-          },
-        ]
-      });;
+    })
+    .populate('Creator', 'Email')
+    .populate('Editors', 'Email')
+    .populate(populateOptions);
     
     res.json(projects);
   } catch (err) {
@@ -107,10 +134,43 @@ router.get('/', auth, async (req, res) => {
  */
 router.get('/:id', auth, async (req, res) => {
   try {
+    const { includeComments = true } = req.query; // Default to true for single project view
+
+    let populateOptions = {
+      path: 'Assignments',
+      model: 'ProjectAssignments',
+      populate: [
+        {
+          path: 'Assignment',
+          model: 'Assignments'
+        },
+        {
+          path: 'Assignee',
+          model: 'Users',
+          select: 'Email Role'
+        }
+      ]
+    };
+
+    // Add comment population if requested
+    if (includeComments === 'true' || includeComments === true) {
+      populateOptions.populate.push({
+        path: 'Comments',
+        model: 'Comments',
+        match: { IsDeleted: false },
+        populate: {
+          path: 'Author',
+          model: 'Users',
+          select: 'Email Role'
+        },
+        options: { sort: { CreatedAt: -1 } }
+      });
+    }
+
     const project = await Project.findById(req.params.id)
       .populate('Creator', 'Email')
       .populate('Editors', 'Email')
-      .populate('Assignments');
+      .populate(populateOptions);
     
     if (!project) {
       return res.status(404).json({ error: 'הפרויקט לא נמצא' });
@@ -125,6 +185,127 @@ router.get('/:id', auth, async (req, res) => {
   } catch (err) {
     console.error('Error fetching project:', err);
     res.status(500).json({ error: 'אירעה שגיאה בטעינת הפרויקט' });
+  }
+});
+
+/**
+ * Get project statistics including comment counts
+ * GET /api/projects/:id/stats
+ */
+router.get('/:id/stats', auth, async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id);
+    
+    if (!project) {
+      return res.status(404).json({ error: 'הפרויקט לא נמצא' });
+    }
+    
+    // Check if user has access to this project
+    if (!project.Creator.equals(req.user._id) && !project.Editors.some(editor => editor._id.equals(req.user._id))) {
+      return res.status(403).json({ error: 'אין הרשאה לגשת לפרויקט זה' });
+    }
+
+    // Get project assignments
+    const projectAssignments = await ProjectAssignment.find({
+      Project: req.params.id
+    });
+
+    const assignmentIds = projectAssignments.map(pa => pa._id);
+
+    // Get comment statistics
+    const commentStats = await Comments.aggregate([
+      {
+        $match: {
+          ProjectAssignment: { $in: assignmentIds },
+          IsDeleted: false
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalComments: { $sum: 1 },
+          commentsThisWeek: {
+            $sum: {
+              $cond: [
+                {
+                  $gte: ['$CreatedAt', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)]
+                },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    // Assignment status statistics
+    const assignmentStats = projectAssignments.reduce((acc, assignment) => {
+      acc[assignment.Status] = (acc[assignment.Status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const stats = {
+      totalAssignments: projectAssignments.length,
+      assignmentsByStatus: assignmentStats,
+      totalComments: commentStats[0]?.totalComments || 0,
+      commentsThisWeek: commentStats[0]?.commentsThisWeek || 0,
+      importantAssignments: projectAssignments.filter(a => a.Important).length
+    };
+
+    res.json(stats);
+  } catch (err) {
+    console.error('Error fetching project stats:', err);
+    res.status(500).json({ error: 'אירעה שגיאה בטעינת סטטיסטיקות הפרויקט' });
+  }
+});
+
+/**
+ * Get recent comments for a project
+ * GET /api/projects/:id/recent-comments
+ */
+router.get('/:id/recent-comments', auth, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    
+    const project = await Project.findById(req.params.id);
+    
+    if (!project) {
+      return res.status(404).json({ error: 'הפרויקט לא נמצא' });
+    }
+    
+    // Check if user has access to this project
+    if (!project.Creator.equals(req.user._id) && !project.Editors.some(editor => editor._id.equals(req.user._id))) {
+      return res.status(403).json({ error: 'אין הרשאה לגשת לפרויקט זה' });
+    }
+
+    // Get project assignments
+    const projectAssignments = await ProjectAssignment.find({
+      Project: req.params.id
+    });
+
+    const assignmentIds = projectAssignments.map(pa => pa._id);
+
+    // Get recent comments
+    const recentComments = await Comments.find({
+      ProjectAssignment: { $in: assignmentIds },
+      IsDeleted: false
+    })
+    .populate('Author', 'Email Role')
+    .populate({
+      path: 'ProjectAssignment',
+      populate: {
+        path: 'Assignment',
+        select: 'Assignment Step'
+      }
+    })
+    .sort({ CreatedAt: -1 })
+    .limit(parseInt(limit));
+
+    res.json(recentComments);
+  } catch (err) {
+    console.error('Error fetching recent comments:', err);
+    res.status(500).json({ error: 'אירעה שגיאה בטעינת תגובות אחרונות' });
   }
 });
 
@@ -155,11 +336,22 @@ router.post('/:id/editors', auth, async (req, res) => {
       return res.status(400).json({ error: 'המשתמש כבר מוגדר כעורך בפרויקט זה' });
     }
 
+    // Verify that the editor user exists
+    const editorUser = await User.findById(editorId);
+    if (!editorUser) {
+      return res.status(400).json({ error: 'המשתמש לא נמצא' });
+    }
+
     // Add editor to project
     project.Editors.push(editorId);
     await project.save();
 
-    res.json(project);
+    // Return updated project with populated editors
+    const updatedProject = await Project.findById(req.params.id)
+      .populate('Creator', 'Email')
+      .populate('Editors', 'Email');
+
+    res.json(updatedProject);
   } catch (err) {
     console.error('Error adding editor to project:', err);
     res.status(500).json({ error: 'אירעה שגיאה בהוספת עורך לפרויקט' });
@@ -188,7 +380,13 @@ router.delete('/:id/editors/:editorId', auth, async (req, res) => {
     );
     
     await project.save();
-    res.json(project);
+    
+    // Return updated project with populated editors
+    const updatedProject = await Project.findById(req.params.id)
+      .populate('Creator', 'Email')
+      .populate('Editors', 'Email');
+    
+    res.json(updatedProject);
   } catch (err) {
     console.error('Error removing editor from project:', err);
     res.status(500).json({ error: 'אירעה שגיאה בהסרת עורך מהפרויקט' });
@@ -234,7 +432,9 @@ router.patch('/:id', auth, async (req, res) => {
       req.params.id,
       { $set: updateFields },
       { new: true, runValidators: true }
-    );
+    )
+    .populate('Creator', 'Email')
+    .populate('Editors', 'Email');
 
     res.json(updatedProject);
   } catch (err) {
@@ -244,7 +444,7 @@ router.patch('/:id', auth, async (req, res) => {
 });
 
 /**
- * Delete project
+ * Delete project and all associated data
  * DELETE /api/projects/:id
  */
 router.delete('/:id', auth, async (req, res) => {
@@ -259,10 +459,30 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(403).json({ error: 'רק יוצר הפרויקט יכול למחוק אותו' });
     }
 
+    // Get all project assignments for this project
+    const projectAssignments = await ProjectAssignment.find({ Project: req.params.id });
+    const assignmentIds = projectAssignments.map(pa => pa._id);
+
+    // Delete all comments associated with project assignments
+    if (assignmentIds.length > 0) {
+      await Comments.deleteMany({
+        ProjectAssignment: { $in: assignmentIds }
+      });
+    }
+
+    // Delete all project assignments
+    await ProjectAssignment.deleteMany({ Project: req.params.id });
+
     // Delete the project
     await Project.findByIdAndDelete(req.params.id);
     
-    res.json({ message: 'הפרויקט נמחק בהצלחה' });
+    res.json({ 
+      message: 'הפרויקט נמחק בהצלחה',
+      deletedComments: assignmentIds.length > 0 ? await Comments.countDocuments({
+        ProjectAssignment: { $in: assignmentIds }
+      }) : 0,
+      deletedAssignments: projectAssignments.length
+    });
   } catch (err) {
     console.error('Error deleting project:', err);
     res.status(500).json({ error: 'אירעה שגיאה במחיקת הפרויקט' });
