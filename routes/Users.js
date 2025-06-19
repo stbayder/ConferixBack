@@ -119,6 +119,31 @@ router.post('/login', async (req, res) => {
 //   }
 // });
 
+router.get('/me/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select('-Password')
+      .populate('Projects');
+    
+    res.json(user);
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/verify-token', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-Password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ valid: true, user });
+  } catch (error) {
+    console.error('Error verifying token:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 router.get('/:id', auth, async (req, res) => {
   try {
@@ -149,17 +174,6 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 
-router.get('/me/profile', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id)
-      .select('-Password')
-      .populate('Projects');
-    
-    res.json(user);
-  } catch (error) {
-    console.error('Error fetching profile:', error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+
 
 module.exports = router;

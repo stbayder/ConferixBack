@@ -29,13 +29,17 @@ mongoose.connect(process.env.MONGO_URI, {
 // Import routes
 const userRoutes = require('./routes/Users.js');
 const projectRoutes = require('./routes/Projects.js');
+const projectAssignmentRoutes = require('./routes/ProjectAssignments.js');
 const assignmentRoutes = require('./routes/Assignments.js');
+
 
 
 // Mount routes
 app.use('/api/users', userRoutes);
 app.use('/api/projects', projectRoutes);
-app.use('/api/project-assignments', assignmentRoutes);
+app.use('/api/project-assignments', projectAssignmentRoutes);
+app.use('/api/assignments', assignmentRoutes);
+
 
 
 // Error handling middleware

@@ -43,30 +43,36 @@ router.post('/', auth, async (req, res) => {
       Type: { $all: projectTypeArray }
     });
 
-    const projectAssignments = assignments.map(assignment => {
-    const offsetDays = assignment.RecommendedStartOffset || 0;
-    const startDate = new Date(projectDate);
-    startDate.setDate(startDate.getDate() + offsetDays);
-
+  const projectAssignments = assignments.map(assignment => {
+    let startDate;
     let dueDate = null;
     let estimatedTime = null;
 
     if (assignment.IsDayOf) {
-      // For day-of assignments, due date is the project date
+      // For day-of assignments, start date is the project date
+      startDate = new Date(projectDate);
       dueDate = new Date(projectDate);
       estimatedTime = assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null;
     } else if (assignment.IsOngoing) {
-      // For ongoing assignments, no specific due date or estimated completion time
+      // For ongoing assignments, start date is the project date, no specific due date
+      startDate = new Date(projectDate);
       dueDate = null;
       estimatedTime = null;
-    } else if (assignment.EstimatedTime) {
-      // For regular assignments, calculate due date based on start date + estimated time
-      dueDate = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
-      estimatedTime = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
     } else {
-      // No estimated time provided, set due date to start date
-      dueDate = new Date(startDate);
-      estimatedTime = null;
+      // For regular assignments, calculate start date using RecommendedStartOffset (X days before project date)
+      const offsetDays = assignment.RecommendedStartOffset || 0;
+      startDate = new Date(projectDate);
+      startDate.setDate(startDate.getDate() - offsetDays);
+
+      if (assignment.EstimatedTime) {
+        // Calculate due date based on start date + estimated time
+        dueDate = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
+        estimatedTime = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
+      } else {
+        // No estimated time provided, set due date to start date
+        dueDate = new Date(startDate);
+        estimatedTime = null;
+      }
     }
 
     return {
