@@ -15,6 +15,7 @@ require('./models/Project');
 require('./models/Assignment');
 require('./models/ProjectAssignment.js')
 require('./models/Comment.js')
+require('./models/Like.js')
 
 
 mongoose.connect(process.env.MONGO_URI, {
