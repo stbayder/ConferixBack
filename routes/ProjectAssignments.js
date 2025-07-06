@@ -5,7 +5,8 @@ const ProjectAssignments = require('../models/ProjectAssignment');
 const Project = require("../models/Project")
 const Users = require('../models/User');
 const Comments = require('../models/Comment'); // New import
-const {auth} = require('../utils/auth')
+const {auth} = require('../utils/auth');
+const User = require('../models/User');
 
 // Create a new ProjectAssignment
 router.post('/', async (req, res) => {
@@ -411,16 +412,69 @@ router.patch('/:id/assignee', async (req, res) => {
        match: { IsDeleted: false },
        populate: { path: 'Author', select: 'Email Role' }
      });
-
+     
     if (!updatedAssignment) {
       return res.status(404).json({ error: 'ProjectAssignment not found' });
     }
 
+    const project = await Project.findByIdAndUpdate(
+      updatedAssignment.Project,
+      { $addToSet: { Editors: Assignee } }, // Adds only if not already present
+      { new: true } // Return updated document
+    );
+    
     res.json(updatedAssignment);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
+
+router.patch('/:id/remove-assignee', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Step 1: Find the original assignment to get the assignee and project
+    const assignmentToUpdate = await ProjectAssignments.findById(id).lean();
+    if (!assignmentToUpdate) {
+      return res.status(404).json({ error: 'ProjectAssignment not found' });
+    }
+
+    const assigneeId = assignmentToUpdate.Assignee;
+    const projectId = assignmentToUpdate.Project;
+
+    // Step 2: Remove assignee from the assignment
+    const updatedAssignment = await ProjectAssignments.findByIdAndUpdate(
+      id,
+      { $unset: { Assignee: 1 } },
+      { new: true, runValidators: true }
+    )
+      .populate('Assignment Project')
+      .populate({
+        path: 'Comments',
+        match: { IsDeleted: false },
+        populate: { path: 'Author', select: 'Email Role' }
+      });
+
+    // Step 3: Check if the assignee is still assigned to any other assignments in the same project
+    const otherAssignments = await ProjectAssignments.find({
+      Project: projectId,
+      Assignee: assigneeId
+    });
+
+    if (otherAssignments.length === 0) {
+      // Step 4: Remove assignee from project's Editors array
+      await Project.findByIdAndUpdate(projectId, {
+        $pull: { Editors: assigneeId }
+      });
+    }
+
+    res.json(updatedAssignment);
+  } catch (error) {
+    console.error('Error in remove-assignee route:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // Get all project assignments with comments
 router.get('/', async (req, res) => {
@@ -465,32 +519,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get single project assignment with comments
-router.get('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const assignment = await ProjectAssignments.findById(id)
-      .populate('Assignment Project Assignee')
-      .populate({
-        path: 'Comments',
-        match: { IsDeleted: false },
-        populate: { path: 'Author', select: 'Email Role' },
-        options: { sort: { CreatedAt: -1 } }
-      });
-
-    if (!assignment) {
-      return res.status(404).json({ error: 'ProjectAssignment not found' });
-    }
-
-    res.json(assignment);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Bonus: Get all comments for a specific project assignment
-// Get all comments for a specific project assignment
 router.get('/:id/comments', async (req, res) => {
   try {
     const { id } = req.params;
@@ -547,5 +575,71 @@ router.get('/:id/comments', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Get single project assignment with comments
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const assignment = await ProjectAssignments.findById(id)
+      .populate('Assignment Project Assignee')
+      .populate({
+        path: 'Comments',
+        match: { IsDeleted: false },
+        populate: { path: 'Author', select: 'Email Role' },
+        options: { sort: { CreatedAt: -1 } }
+      });
+
+    if (!assignment) {
+      return res.status(404).json({ error: 'ProjectAssignment not found' });
+    }
+
+    res.json(assignment);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/:project_id/:user_id',auth, async (req, res) => {
+  try {
+    const { project_id,user_id } = req.params;
+    
+    const project = await Project.findById(project_id)
+    if(!project){
+      return res.status(404).json({ error: 'project was not found' });
+    }
+
+    const user = await User.findById(user_id)
+    if(!user){
+      return res.status(404).json({ error: 'user was not found' });
+    }
+
+    const filter = {
+      Project: project_id,
+      Assignee: user_id
+    };
+
+    const assignments = await ProjectAssignments.find(filter)
+      .populate('Assignment Project Assignee')
+      .populate({
+        path: 'Comments',
+        match: { IsDeleted: false },
+        populate: { path: 'Author', select: 'Email Role' },
+        options: { sort: { CreatedAt: -1 } }
+      })
+    
+
+    if (assignments.length === 0) {
+      return res.status(404).json({ error: 'לא נמצאו משימות למשתמש זה' });
+    }
+
+    res.json(assignments);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+// Bonus: Get all comments for a specific project assignment
+// Get all comments for a specific project assignment
+
 
 module.exports = router;

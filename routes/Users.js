@@ -103,21 +103,25 @@ router.post('/login', async (req, res) => {
   }
 });
 
+router.get('/check', auth, async (req, res) => {
+  try {
+    const { email } = req.query; // Use query parameter instead of body for GET request
+    if (!email) {
+      return res.status(400).json({ error: 'לא התקבל אימייל לבדיקה' });
+    }
 
-// router.get('/', auth, async (req, res) => {
-//   try {
-//     // Check if user is admin
-//     if (req.user.Role !== 'admin') {
-//       return res.status(403).json({ error: 'Access denied' });
-//     }
+    const user = await User.findOne({ Email: email });
+    console.log(user)
+    if (!user) {
+      return res.status(404).json({ error: 'משתמש לא קיים' });
+    }
     
-//     const users = await User.find().select('-Password');
-//     res.json(users);
-//   } catch (error) {
-//     console.error('Error fetching users:', error);
-//     res.status(500).json({ error: 'Server error' });
-//   }
-// });
+    res.json(user);
+  } catch (error) {
+    console.error('Error checking user:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 router.get('/me/profile', auth, async (req, res) => {
   try {

@@ -12,98 +12,68 @@ const { auth } = require('../utils/auth');
  * Create new project with simplified required parameters
  * POST /api/projects
  */
-router.post('/', auth, async (req, res) => {
-  try {
-    const { name, date, type, budget = 0 } = req.body;
+// router.get('/', auth, async (req, res) => {
+//   try {
+//     const { includeComments = false } = req.query;
 
-    // Validate required fields
-    if (!name) return res.status(400).json({ error: 'שם הפרויקט הוא שדה חובה' });
-    if (!date) return res.status(400).json({ error: 'תאריך הפרויקט הוא שדה חובה' });
-    if (!type || (Array.isArray(type) && type.length === 0))
-      return res.status(400).json({ error: 'סוג הפרויקט הוא שדה חובה' });
+//     let populateOptions = {
+//       path: 'Assignments',
+//       model: 'ProjectAssignments',
+//       populate: [
+//         {
+//           path: 'Assignment',
+//           model: 'Assignments'
+//         },
+//         {
+//           path: 'Assignee',
+//           model: 'Users',
+//           select: 'Email Role'
+//         }
+//       ]
+//     };
 
-    const projectTypeArray = Array.isArray(type) ? type : [type];
-    const projectDate = new Date(date);
+//     // Add comment population if requested
+//     if (includeComments === 'true') {
+//       populateOptions.populate.push({
+//         path: 'Comments',
+//         model: 'Comments',
+//         match: { IsDeleted: false }, // Only include non-deleted comments
+//         populate: {
+//           path: 'Author',
+//           model: 'Users',
+//           select: 'Email Role'
+//         },
+//         options: { sort: { CreatedAt: -1 } } // Sort comments by newest first
+//       });
+//     }
 
-    // Create the project
-    const project = new Project({
-      name,
-      date: projectDate,
-      Creator: req.user._id,
-      Type: projectTypeArray,
-      Budget: budget,
-      Editors: [],
-      Assignments: []
-    });
+//     const projects = await Project.find({
+//       $or: [
+//         { Creator: req.user._id },
+//         { Editors: req.user._id }
+//       ]
+//     })
+//     .populate('Creator', 'Email')
+//     .populate('Editors', 'Email')
+//     .populate(populateOptions);
 
-    await project.save();
+//     // Inject Creator ID into each assignment
+//     projects.forEach(project => {
+//       const creatorId = project.Creator?._id || null;
+//       project.Assignments.forEach(pa => {
+//         // Add creator to each ProjectAssignment (not in DB, just for frontend use)
+//         pa._doc.Creator = creatorId;
+//       });
+//     });
 
-    // Find matching assignments where all project types exist in the assignment Type array
-    const assignments = await Assignment.find({
-      Type: { $all: projectTypeArray }
-    });
+//     res.json(projects);
+//   } catch (err) {
+//     console.error('Error fetching projects:', err);
+//     res.status(500).json({ error: 'אירעה שגיאה בטעינת הפרויקטים' });
+//   }
+// });
 
-  const projectAssignments = assignments.map(assignment => {
-    let startDate;
-    let dueDate = null;
-    let estimatedTime = null;
 
-    if (assignment.IsDayOf) {
-      // For day-of assignments, start date is the project date
-      startDate = new Date(projectDate);
-      dueDate = new Date(projectDate);
-      estimatedTime = assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null;
-    } else if (assignment.IsOngoing) {
-      // For ongoing assignments, start date is the project date, no specific due date
-      startDate = new Date(projectDate);
-      dueDate = null;
-      estimatedTime = null;
-    } else {
-      // For regular assignments, calculate start date using RecommendedStartOffset (X days before project date)
-      const offsetDays = assignment.RecommendedStartOffset || 0;
-      startDate = new Date(projectDate);
-      startDate.setDate(startDate.getDate() - offsetDays);
-
-      if (assignment.EstimatedTime) {
-        // Calculate due date based on start date + estimated time
-        dueDate = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
-        estimatedTime = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
-      } else {
-        // No estimated time provided, set due date to start date
-        dueDate = new Date(startDate);
-        estimatedTime = null;
-      }
-    }
-
-    return {
-      Assignment: assignment._id,
-      Project: project._id,
-      Assignee: null, // not assigned yet
-      EstimatedTime: estimatedTime,
-      RecommendedStartDate: startDate,
-      DueDate: dueDate,
-      Comments: [], // Initialize empty comments array (will contain Comment ObjectIds)
-      Important: assignment.IsDayOf || false,
-      Status: 'Pending'
-    };
-  });
-    const insertedAssignments = await ProjectAssignment.insertMany(projectAssignments);
-
-    // Update the project with linked assignment IDs
-    project.Assignments = insertedAssignments.map(pa => pa._id);
-    await project.save();
-
-    res.status(201).json(project);
-  } catch (err) {
-    console.error('Error creating project:', err);
-    res.status(500).json({ error: 'אירעה שגיאה ביצירת הפרויקט' });
-  }
-});
-
-/**
- * Get all projects for current user
- * GET /api/projects
- */
 router.get('/', auth, async (req, res) => {
   try {
     const { includeComments = false } = req.query;
@@ -129,27 +99,68 @@ router.get('/', auth, async (req, res) => {
       populateOptions.populate.push({
         path: 'Comments',
         model: 'Comments',
-        match: { IsDeleted: false }, // Only include non-deleted comments
+        match: { IsDeleted: false },
         populate: {
           path: 'Author',
           model: 'Users',
           select: 'Email Role'
         },
-        options: { sort: { CreatedAt: -1 } } // Sort comments by newest first
+        options: { sort: { CreatedAt: -1 } }
       });
     }
 
+    // Step 1: Find all ProjectAssignments where user is the assignee
+    const userAssignments = await ProjectAssignment.find({ 
+      Assignee: req.user._id 
+    }).select('_id');
+    
+    const userAssignmentIds = userAssignments.map(assignment => assignment._id);
+
+    // Step 2: Find projects where user is Creator, Editor, OR has assignments
     const projects = await Project.find({
       $or: [
         { Creator: req.user._id },
-        { Editors: req.user._id }
+        { Editors: req.user._id },
+        { Assignments: { $in: userAssignmentIds } }
       ]
     })
     .populate('Creator', 'Email')
     .populate('Editors', 'Email')
     .populate(populateOptions);
+
+    // Step 3: Filter assignments based on user permissions
+    const filteredProjects = projects.map(project => {
+      const projectObj = project.toObject();
+      
+      // Check if user is creator
+      const isCreator = project.Creator._id.toString() === req.user._id.toString();
+      
+      if (isCreator) {
+        // Creators see all assignments
+        return projectObj;
+      } else {
+        // Editors and assignees only see their own assignments
+        projectObj.Assignments = project.Assignments.filter(assignment => 
+          assignment.Assignee && assignment.Assignee._id.toString() === req.user._id.toString()
+        );
+        return projectObj;
+      }
+    });
+
+    // Step 4: Remove projects with no assignments for non-creator users
+    const finalProjects = filteredProjects.filter(project => {
+      const isCreator = project.Creator._id.toString() === req.user._id.toString();
+      
+      // Always include if user is creator
+      if (isCreator) {
+        return true;
+      }
+      
+      // Only include if user has assignments in this project (for editors and assignees)
+      return project.Assignments && project.Assignments.length > 0;
+    });
     
-    res.json(projects);
+    res.json(finalProjects);
   } catch (err) {
     console.error('Error fetching projects:', err);
     res.status(500).json({ error: 'אירעה שגיאה בטעינת הפרויקטים' });
@@ -195,21 +206,47 @@ router.get('/:id', auth, async (req, res) => {
       });
     }
 
-    const project = await Project.findById(req.params.id)
-      .populate('Creator', 'Email')
-      .populate('Editors', 'Email')
-      .populate(populateOptions);
+    // Step 1: Find user assignments for this project
+    const userAssignments = await ProjectAssignment.find({ 
+      Assignee: req.user._id 
+    }).select('_id');
+    
+    const userAssignmentIds = userAssignments.map(assignment => assignment._id);
+
+    // Step 2: Find the project with access check
+    const project = await Project.findOne({
+      _id: req.params.id,
+      $or: [
+        { Creator: req.user._id },
+        { Editors: req.user._id },
+        { Assignments: { $in: userAssignmentIds } }
+      ]
+    })
+    .populate('Creator', 'Email')
+    .populate('Editors', 'Email')
+    .populate(populateOptions);
     
     if (!project) {
-      return res.status(404).json({ error: 'הפרויקט לא נמצא' });
+      return res.status(404).json({ error: 'הפרויקט לא נמצא או שאין הרשאה לגשת אליו' });
     }
     
-    // Check if user has access to this project
-    if (!project.Creator.equals(req.user._id) && !project.Editors.some(editor => editor._id.equals(req.user._id))) {
-      return res.status(403).json({ error: 'אין הרשאה לגשת לפרויקט זה' });
+    // Step 3: Filter assignments based on user permissions
+    const projectObj = project.toObject();
+    
+    // Check if user is creator
+    const isCreator = project.Creator._id.toString() === req.user._id.toString();
+    
+    if (isCreator) {
+      // Creators see all assignments
+      // projectObj already has all assignments, no filtering needed
+    } else {
+      // Editors and assignees only see their own assignments
+      projectObj.Assignments = project.Assignments.filter(assignment => 
+        assignment.Assignee && assignment.Assignee._id.toString() === req.user._id.toString()
+      );
     }
     
-    res.json(project);
+    res.json(projectObj);
   } catch (err) {
     console.error('Error fetching project:', err);
     res.status(500).json({ error: 'אירעה שגיאה בטעינת הפרויקט' });
