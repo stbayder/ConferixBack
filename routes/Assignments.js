@@ -88,13 +88,26 @@ router.get('/', async (req, res) => {
     const totalCount = await Assignments.countDocuments(filter);
     const totalPages = Math.ceil(totalCount / limitNum);
 
+    // Get all unique steps for filter options (NEW)
+    const allSteps = await Assignments.distinct('Step');
+    const availableSteps = allSteps.filter(step => step && step.trim()).sort();
+
+    // Get all unique statuses for filter options (OPTIONAL)
+    const allStatuses = await Assignments.distinct('Status');
+    const availableStatuses = allStatuses.filter(status => status && status.trim()).sort();
+
     res.json({
       assignments: filteredAssignments,
       currentPage: pageNum,
       totalPages,
       totalCount: filteredAssignments.length,
       hasNextPage: pageNum < totalPages,
-      hasPrevPage: pageNum > 1
+      hasPrevPage: pageNum > 1,
+      // Filter options
+      filterOptions: {
+        steps: availableSteps,
+        statuses: availableStatuses
+      }
     });
 
   } catch (error) {
