@@ -12,67 +12,92 @@ const { auth } = require('../utils/auth');
  * Create new project with simplified required parameters
  * POST /api/projects
  */
-// router.get('/', auth, async (req, res) => {
-//   try {
-//     const { includeComments = false } = req.query;
+router.post('/', auth, async (req, res) => {
+  try {
+    const { name, date, type, budget = 0 } = req.body;
 
-//     let populateOptions = {
-//       path: 'Assignments',
-//       model: 'ProjectAssignments',
-//       populate: [
-//         {
-//           path: 'Assignment',
-//           model: 'Assignments'
-//         },
-//         {
-//           path: 'Assignee',
-//           model: 'Users',
-//           select: 'Email Role'
-//         }
-//       ]
-//     };
+    // Validate required fields
+    if (!name) return res.status(400).json({ error: 'שם הפרויקט הוא שדה חובה' });
+    if (!date) return res.status(400).json({ error: 'תאריך הפרויקט הוא שדה חובה' });
+    if (!type || (Array.isArray(type) && type.length === 0))
+      return res.status(400).json({ error: 'סוג הפרויקט הוא שדה חובה' });
 
-//     // Add comment population if requested
-//     if (includeComments === 'true') {
-//       populateOptions.populate.push({
-//         path: 'Comments',
-//         model: 'Comments',
-//         match: { IsDeleted: false }, // Only include non-deleted comments
-//         populate: {
-//           path: 'Author',
-//           model: 'Users',
-//           select: 'Email Role'
-//         },
-//         options: { sort: { CreatedAt: -1 } } // Sort comments by newest first
-//       });
-//     }
+    const projectTypeArray = Array.isArray(type) ? type : [type];
+    const projectDate = new Date(date);
 
-//     const projects = await Project.find({
-//       $or: [
-//         { Creator: req.user._id },
-//         { Editors: req.user._id }
-//       ]
-//     })
-//     .populate('Creator', 'Email')
-//     .populate('Editors', 'Email')
-//     .populate(populateOptions);
+    // Create the project
+    const project = new Project({
+      name,
+      date: projectDate,
+      Creator: req.user._id,
+      Type: projectTypeArray,
+      Budget: budget,
+      Editors: [],
+      Assignments: []
+    });
 
-//     // Inject Creator ID into each assignment
-//     projects.forEach(project => {
-//       const creatorId = project.Creator?._id || null;
-//       project.Assignments.forEach(pa => {
-//         // Add creator to each ProjectAssignment (not in DB, just for frontend use)
-//         pa._doc.Creator = creatorId;
-//       });
-//     });
+    await project.save();
 
-//     res.json(projects);
-//   } catch (err) {
-//     console.error('Error fetching projects:', err);
-//     res.status(500).json({ error: 'אירעה שגיאה בטעינת הפרויקטים' });
-//   }
-// });
+    // Find matching assignments where all project types exist in the assignment Type array
+    const assignments = await Assignment.find({
+      Type: { $all: projectTypeArray }
+    });
 
+  const projectAssignments = assignments.map(assignment => {
+    let startDate;
+    let dueDate = null;
+    let estimatedTime = null;
+
+    if (assignment.IsDayOf) {
+      // For day-of assignments, start date is the project date
+      startDate = new Date(projectDate);
+      dueDate = new Date(projectDate);
+      estimatedTime = assignment.EstimatedTime ? new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000) : null;
+    } else if (assignment.IsOngoing) {
+      // For ongoing assignments, start date is the project date, no specific due date
+      startDate = new Date(projectDate);
+      dueDate = null;
+      estimatedTime = null;
+    } else {
+      // For regular assignments, calculate start date using RecommendedStartOffset (X days before project date)
+      const offsetDays = assignment.RecommendedStartOffset || 0;
+      startDate = new Date(projectDate);
+      startDate.setDate(startDate.getDate() - offsetDays);
+
+      if (assignment.EstimatedTime) {
+        // Calculate due date based on start date + estimated time
+        dueDate = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
+        estimatedTime = new Date(startDate.getTime() + assignment.EstimatedTime * 60 * 60 * 1000);
+      } else {
+        // No estimated time provided, set due date to start date
+        dueDate = new Date(startDate);
+        estimatedTime = null;
+      }
+    }
+
+    return {
+      Assignment: assignment._id,
+      Project: project._id,
+      Assignee: null, // not assigned yet
+      EstimatedTime: estimatedTime,
+      RecommendedStartDate: startDate,
+      DueDate: dueDate,
+      Comments: [], // Initialize empty comments array (will contain Comment ObjectIds)
+      Important: assignment.IsDayOf || false,
+      Status: 'Pending'
+    };
+  });
+    const insertedAssignments = await ProjectAssignment.insertMany(projectAssignments);
+
+    // Update the project with linked assignment IDs
+    project.Assignments = insertedAssignments.map(pa => pa._id);
+    await project.save();
+        res.status(201).json(project);
+  } catch (err) {
+    console.error('Error creating project:', err);
+    res.status(500).json({ error: 'אירעה שגיאה ביצירת הפרויקט' });
+  }
+});
 
 router.get('/', auth, async (req, res) => {
   try {
